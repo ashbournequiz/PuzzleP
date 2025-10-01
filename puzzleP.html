@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Word Search — Vocabulary Rounds</title>
+<style>
+  :root{
+    --bg: #fffde7;   /* pale yellow */
+    --card: #ffffff; /* white panels */
+    --accent: #2563eb;
+    --found: #16a34a;
+    --muted: #374151;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background:var(--bg);
+    color:#0f1724;
+    padding:18px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  h1{font-size:20px;margin:0}
+  .controls{display:flex;gap:8px;align-items:center}
+  button{background:var(--card);border:1px solid rgba(15,23,36,0.06);padding:8px 12px;border-radius:8px;cursor:pointer}
+  .topline{display:flex;gap:12px;align-items:center}
+  .round-indicator{font-weight:700;color:var(--accent)}
+  .content{display:grid;grid-template-columns: 1fr 360px;gap:18px}
+  @media (max-width:940px){.content{grid-template-columns:1fr}}
+  .panel{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.06)}
+  .grid-wrap{display:flex;flex-direction:column;gap:10px;align-items:center}
+  #grid{display:grid;gap:3px;user-select:none;touch-action:none}
+  .cell{
+    width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+    background:#f8fafc;border-radius:6px;border:1px solid rgba(2,6,23,0.05);
+    font-weight:600;color:#0f1724;font-size:14px;
+  }
+  .cell.selected{background:linear-gradient(90deg,var(--accent), #06b6d4);color:#fff}
+  .cell.found{background:var(--found);color:#fff;border-color:rgba(0,0,0,0.08)}
+  .clues{display:flex;flex-direction:column;gap:8px}
+  .clue{padding:8px;border-radius:8px;background:rgba(2,6,23,0.02);font-size:14px}
+  .clue.found{text-decoration:line-through;color:var(--found);opacity:0.9}
+  .clue strong{display:inline-block;min-width:120px}
+  .statusbar{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:14px}
+  .notice{margin-top:12px;padding:10px;border-radius:8px;background:linear-gradient(90deg,#fef3c7,#fff6d6);border:1px solid rgba(0,0,0,0.03)}
+  .small{font-size:13px;color:var(--muted)}
+  .controls .ghost{background:transparent;border:1px dashed rgba(15,23,36,0.06)}
+  .footer{margin-top:12px;display:flex;gap:8px;align-items:center;justify-content:flex-end}
+  .btn-primary{background:var(--accent);color:#fff;border:none}
+  .center{display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Word Search — Vocabulary Rounds</h1>
+        <div class="small">Find the words using the clues on the right. Highlight letters (drag or touch) to select.</div>
+      </div>
+      <div class="controls">
+        <div class="topline">
+          <div>Round <span id="roundNum" class="round-indicator">1</span> of 4</div>
+          <div class="small" id="progressText">Found 0 / 11</div>
+        </div>
+        <button id="resetRound" class="ghost">Reset Round</button>
+        <button id="restart" class="ghost">Restart All</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="panel grid-wrap">
+        <div id="gridContainer" class="center"></div>
+        <div class="statusbar">
+          <div class="small" id="roundStatus">Round 1: 11 words</div>
+          <div class="small" id="roundHint"></div>
+        </div>
+        <div id="roundCompleteNotice" style="display:none" class="notice"></div>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin-top:0">Clues (Definitions)</h3>
+        <div class="clues" id="cluesList"></div>
+        <div class="footer">
+          <button id="nextRound" class="btn-primary" disabled>Next Round ▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+ Word Search with 4 rounds. Each round is seeded with a subset of the provided words.
+ Core behaviors:
+  - User highlights cells by click+drag (or touch).
+  - On mouseup/touchend, selection is checked for a matching word (forward/backwards).
+  - Found words are marked in the grid and in clues; round progress updated.
+  - When all words for round are found, show notice and enable Next Round.
+*/
+
+/* === WORD LIST and DEFINITIONS (as provided) ===
+ We'll split into 4 rounds: 11, 11, 10, 10 = 42 total words
+*/
+const ROUNDS = [
+  // Round 1: first 11
+  [
+    {w:"PANEL", d:"A flat piece of material, or a group of experts."},
+    {w:"PARADIGM", d:"A model or example that shows how things work."},
+    {w:"PARAGRAPH", d:"A group of sentences about the same idea."},
+    {w:"PARALLEL", d:"Happening at the same time or in a similar way; lines or paths that never meet"},
+    {w:"PARAMETER", d:"A rule, limit, or condition that controls what something can do"},
+    {w:"PARTNER", d:"A person or group you work with or share something with"},
+    {w:"PASSIVE", d:"Accepting things without acting to change them."},
+    {w:"PERCEIVE", d:"To see or understand something in a certain way"},
+    {w:"PERCENT", d:"A part of 100. (example: 50 percent means 50 out of 100)"},
+    {w:"PERIOD", d:"A length of time"},
+    {w:"PERSIST", d:"To continue doing something even when it’s difficult."}
+  ],
+  // Round 2: next 11
+  [
+    {w:"PERSPECTIVE", d:"A way of looking at or thinking about something"},
+    {w:"PHASE", d:"A stage or step in a process"},
+    {w:"PHENOMENON", d:"Something that happens or exists, especially something unusual or interesting."},
+    {w:"PHILOSOPHY", d:"A set of ideas or beliefs about how to live or how things should be done"},
+    {w:"POLICY", d:"A plan of action agreed by a group or organisation"},
+    {w:"POSE", d:"To present or create a problem; or to position yourself for a photo."},
+    {w:"POTENTIAL", d:"The ability to become something in the future"},
+    {w:"PRACTICAL", d:"Based on application or usefulness"},
+    {w:"PRACTITIONER", d:"A person who works in a skilled job, especially medicine or law."},
+    {w:"PRECEDE", d:"To come before something else"},
+    {w:"PRECISE", d:"Exact and clear"}
+  ],
+  // Round 3: next 10
+  [
+    {w:"PREDICT", d:"To say what you think will happen in the future"},
+    {w:"PREDOMINANT", d:"The most common or important."},
+    {w:"PRELIMINARY", d:"Done first to prepare for something bigger."},
+    {w:"PRESUME", d:"To believe something is true without full proof"},
+    {w:"PREVIOUS", d:"Happened before"},
+    {w:"PRIMARY", d:"First or most important"},
+    {w:"PRIME", d:"Most important or main; best"},
+    {w:"PRINCIPAL", d:"Most important; main"},
+    {w:"PRINCIPLE", d:"A basic rule or idea that guides actions"},
+    {w:"PRIOR", d:"Before something else in time"}
+  ],
+  // Round 4: last 10
+  [
+    {w:"PRIORITY", d:"Something important that should be done first."},
+    {w:"PROCEED", d:"To continue or move forward"},
+    {w:"PROCESS", d:"A series of steps to do or make something"},
+    {w:"PROHIBIT", d:"To not allow something."},
+    {w:"PROJECT", d:"(noun) A planned work or activity ... (verb) To estimate or plan something for the future"},
+    {w:"PROPORTION", d:"The amount or part of something compared to the whole"},
+    {w:"PROSPECT", d:"The possibility that something will happen."},
+    {w:"PROTOCOL", d:"Official rules for how to do things."},
+    {w:"PUBLICATION", d:"A book, magazine, or other printed or online work made for the public."},
+    {w:"PURSUE", d:"To follow or try to get something"}
+  ]
+];
+
+/* --- Utility helpers --- */
+function randInt(n){ return Math.floor(Math.random()*n); }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=randInt(i+1); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+/* --- Grid generator --- */
+/*
+ We'll create a square grid with size depending on total letters of words and round size.
+ Strategy:
+  - Choose gridSize (12..16) depending on longest word and number of words.
+  - For each word, try random placement (direction among 8) up to 200 attempts.
+  - Directions: [dx,dy] where dx: col step, dy: row step
+*/
+const DIRS = [
+  [1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]
+];
+
+function makeGridForRound(words){
+  // determine grid size
+  const longest = Math.max(...words.map(w=>w.w.length));
+  let size = Math.max(12, longest + 2);
+  // increase size slightly if many words
+  if(words.length > 10) size += 2;
+  if(words.length > 12) size += 2;
+  size = Math.min(size, 18);
+
+  // initialize empty grid with nulls
+  const grid = Array.from({length:size},()=>Array.from({length:size},()=>null));
+
+  const placed = []; // store placed word objects with coords
+  for(const card of words){
+    const word = card.w.replace(/[^A-Z]/gi,'').toUpperCase();
+    let placedFlag=false;
+    for(let attempt=0; attempt<300 && !placedFlag; attempt++){
+      const dir = DIRS[randInt(DIRS.length)];
+      const dx = dir[0], dy = dir[1];
+      const len = word.length;
+      const maxCol = dx===1 ? size - len : dx===-1 ? len-1 : size-1;
+      const maxRow = dy===1 ? size - len : dy===-1 ? len-1 : size-1;
+      const startCol = randInt(size);
+      const startRow = randInt(size);
+
+      // compute indices for word given start and direction
+      let ok=true;
+      let col = startCol, row = startRow;
+      for(let i=0;i<len;i++){
+        if(col<0||col>=size||row<0||row>=size){ok=false;break;}
+        const cell = grid[row][col];
+        if(cell !== null && cell !== word[i]) { ok=false; break; }
+        col += dx; row += dy;
+      }
+      if(!ok) continue;
+
+      // place the word
+      col = startCol; row = startRow;
+      const coords = [];
+      for(let i=0;i<len;i++){
+        grid[row][col] = word[i];
+        coords.push([row,col]);
+        col += dx; row += dy;
+      }
+      placed.push({word, coords, card});
+      placedFlag=true;
+    }
+    if(!placedFlag){
+      // fallback: try to force horizontal placement by scanning
+      for(let r=0;r<size && !placedFlag;r++){
+        for(let c=0;c<=size-word.length && !placedFlag;c++){
+          let ok=true;
+          for(let k=0;k<word.length;k++){
+            if(grid[r][c+k] !== null && grid[r][c+k] !== word[k]) { ok=false; break; }
+          }
+          if(ok){
+            const coords = [];
+            for(let k=0;k<word.length;k++){
+              grid[r][c+k] = word[k];
+              coords.push([r,c+k]);
+            }
+            placed.push({word, coords, card});
+            placedFlag=true;
+          }
+        }
+      }
+    }
+  }
+
+  // fill remaining nulls with random letters
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      if(grid[r][c] === null) grid[r][c] = letters[randInt(letters.length)];
+    }
+  }
+
+  return {grid, placed, size};
+}
+
+/* --- UI and interaction --- */
+let currentRoundIndex = 0;
+let currentData = null; // {grid, placed, size, words}
+let selection = []; // array of [row,col]
+let mouseDown = false;
+let foundWords = new Set();
+
+const gridContainer = document.getElementById('gridContainer');
+const cluesList = document.getElementById('cluesList');
+const roundNumEl = document.getElementById('roundNum');
+const progressText = document.getElementById('progressText');
+const roundStatus = document.getElementById('roundStatus');
+const roundCompleteNotice = document.getElementById('roundCompleteNotice');
+const nextRoundBtn = document.getElementById('nextRound');
+const resetRoundBtn = document.getElementById('resetRound');
+const restartBtn = document.getElementById('restart');
+
+function startRound(index){
+  currentRoundIndex = index;
+  foundWords.clear();
+  selection = [];
+  roundCompleteNotice.style.display = 'none';
+  nextRoundBtn.disabled = true;
+
+  const wordCards = ROUNDS[index];
+  // generate grid
+  currentData = makeGridForRound(wordCards);
+  renderGrid();
+  renderClues();
+
+  roundNumEl.textContent = (index+1);
+  progressText.textContent = `Found 0 / ${wordCards.length}`;
+  roundStatus.textContent = `Round ${index+1}: ${wordCards.length} words`;
+}
+
+function renderGrid(){
+  // create DOM grid
+  const {grid, size} = currentData;
+  const gridEl = document.createElement('div');
+  gridEl.id = 'grid';
+  gridEl.style.gridTemplateColumns = `repeat(${size}, 36px)`;
+  gridEl.style.width = `${size * 39}px`; // approximate width (cell+gap)
+  // clear container and append
+  gridContainer.innerHTML = '';
+  gridContainer.appendChild(gridEl);
+
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      cell.textContent = grid[r][c];
+      gridEl.appendChild(cell);
+      // attach pointer handlers
+      cell.addEventListener('pointerdown', onPointerDown);
+      cell.addEventListener('pointerenter', onPointerEnter);
+      cell.addEventListener('pointerup', onPointerUp);
+      // prevent default touch behavior
+      cell.addEventListener('touchstart', e=>e.preventDefault());
+    }
+  }
+  // handle pointerup globally in case pointer leaves grid
+  window.addEventListener('pointerup', onPointerUp);
+}
+
+function renderClues(){
+  cluesList.innerHTML = '';
+  const cards = ROUNDS[currentRoundIndex];
+  cards.forEach(card=>{
+    const el = document.createElement('div');
+    el.className = 'clue';
+    el.id = 'clue-' + card.w;
+    const title = document.createElement('div');
+    title.innerHTML = `<strong>${card.w}</strong> — ${card.d}`;
+    el.appendChild(title);
+    cluesList.appendChild(el);
+  });
+}
+
+/* pointer handlers */
+function onPointerDown(e){
+  e.preventDefault();
+  clearSelection();
+  mouseDown = true;
+  this.classList.add('selected');
+  selection.push([parseInt(this.dataset.row), parseInt(this.dataset.col)]);
+}
+
+function onPointerEnter(e){
+  if(!mouseDown) return;
+  const row = parseInt(this.dataset.row), col = parseInt(this.dataset.col);
+  const last = selection.length ? selection[selection.length-1] : null;
+  // avoid repeated same cell
+  if(last && last[0] === row && last[1] === col) return;
+  this.classList.add('selected');
+  selection.push([row,col]);
+}
+
+function onPointerUp(e){
+  if(!mouseDown && selection.length===0) return;
+  mouseDown = false;
+  if(selection.length > 0){
+    checkSelection();
+  }
+  // clear temporary selection classes (found cells will get .found)
+  document.querySelectorAll('.cell.selected').forEach(el=>el.classList.remove('selected'));
+  selection = [];
+}
+
+/* selection -> string */
+function selectionToString(sel){
+  const {grid} = currentData;
+  return sel.map(([r,c])=>grid[r][c]).join('');
+}
+
+/* Check if selection matches any word (forward/backwards) */
+function checkSelection(){
+  if(!currentData) return;
+  const selStr = selectionToString(selection);
+  const selStrRev = selStr.split('').reverse().join('');
+  // check against placed words
+  for(const placed of currentData.placed){
+    const word = placed.word;
+    if(foundWords.has(word)) continue;
+    if(selStr === word || selStrRev === word){
+      // mark those coords as found
+      for(const [r,c] of placed.coords){
+        const selector = `.cell[data-row="${r}"][data-col="${c}"]`;
+        const el = document.querySelector(selector);
+        if(el) el.classList.add('found');
+      }
+      foundWords.add(word);
+      markClueFound(placed.card.w);
+      updateProgress();
+      checkRoundComplete();
+      return;
+    }
+  }
+  // If not matched, give small feedback: briefly flash selected cells as incorrect
+  document.querySelectorAll('.cell').forEach(el=>{
+    if(el.classList.contains('selected')){
+      el.classList.add('incorrect-temp');
+      setTimeout(()=>el.classList.remove('incorrect-temp'),280);
+    }
+  });
+}
+
+/* Mark clue found in clue list */
+function markClueFound(word){
+  const id = 'clue-' + word;
+  const el = document.getElementById(id);
+  if(el) el.classList.add('found');
+}
+
+/* Update progress UI */
+function updateProgress(){
+  const total = ROUNDS[currentRoundIndex].length;
+  const found = foundWords.size;
+  progressText.textContent = `Found ${found} / ${total}`;
+}
+
+/* When round is complete */
+function checkRoundComplete(){
+  const total = ROUNDS[currentRoundIndex].length;
+  if(foundWords.size >= total){
+    // show notice, enable next
+    roundCompleteNotice.style.display = 'block';
+    roundCompleteNotice.innerHTML = `<strong>Round ${currentRoundIndex+1} complete!</strong> You found all ${total} words.`;
+    nextRoundBtn.disabled = (currentRoundIndex >= ROUNDS.length - 1);
+    // auto-enable next after short delay
+    // but only auto-advance if not last round
+    if(currentRoundIndex < ROUNDS.length - 1){
+      setTimeout(()=> {
+        nextRoundBtn.disabled = false;
+        // give user control to press Next
+      }, 400);
+    } else {
+      // final round completed
+      roundCompleteNotice.innerHTML += `<div style="margin-top:8px">🎉 All rounds complete — well done!</div>`;
+      nextRoundBtn.disabled = true;
+    }
+  }
+}
+
+/* Clear selection styling */
+function clearSelection(){
+  document.querySelectorAll('.cell.selected').forEach(el=>el.classList.remove('selected'));
+  selection = [];
+}
+
+/* Reset handlers */
+nextRoundBtn.addEventListener('click', ()=>{
+  if(currentRoundIndex < ROUNDS.length - 1){
+    startRound(currentRoundIndex + 1);
+  }
+});
+
+resetRoundBtn.addEventListener('click', ()=>{
+  startRound(currentRoundIndex);
+});
+
+restartBtn.addEventListener('click', ()=>{
+  startRound(0);
+});
+
+/* keyboard accessibility: allow arrow navigation to move a virtual cursor and enter/select
+   (Basic support: user can use mouse/touch, keyboard support is minimal)
+*/
+
+/* initialize first round */
+startRound(0);
+
+</script>
+</body>
+</html>
